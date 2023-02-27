@@ -92,5 +92,6 @@ def draw_boxes(images, results, v_labels):
         new_images.append(np.array(image)[..., ::-1])
     return new_images
 
+
 if __name__ == "__main__":
     main()

@@ -1,65 +1,26 @@
+from functools import partial
+
 import vlc
 import os
-import tkinter as tk
 from tkinter import *
-from tkinter import ttk
-from typing import Iterable
-from test import ScrollableFrame
+import tkinter.ttk as ttk
+from scrollable_frame import ScrollableFrame
+from tkinter import filedialog, messagebox
 
 CWD = os.getcwd()
 MRL = r"C:\Users\Pedro Muniz\Desktop\object_detection\runs\detect\predict\test.mp4"
 icons_path = CWD + '\\icons\\'
-test_meta = CWD + '\\out_video_meta.txt'
+test_meta = CWD + '\\runs/detect/predict/out_video_meta.txt'
 
-
-class ScrollFrame(Frame):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)  # create a frame (self)
-
-        self.canvas = tk.Canvas(self, bg='yellow')  # place canvas on self
-        self.viewPort = tk.Frame(self)  # place a frame on the canvas, this frame will hold the child widgets
-        self.vsb = tk.Scrollbar(self, orient=VERTICAL, command=self.canvas.yview)  # place a scrollbar on self
-        self.canvas.configure(yscrollcommand=self.vsb.set)  # attach scrollbar action to scroll of canvas
-
-        # self.vsb.pack(side=RIGHT, fill=Y)  # pack scrollbar to right of self
-        # self.viewPort.pack()
-        self.canvas.pack()  # pack canvas to left of self and expand to fil
-        self.canvas.create_window((0, 0), window=self.viewPort, anchor="nw", tags="self.viewPort")
-
-        self.viewPort.bind("<Configure>", self.onFrameConfigure)  # bind an event whenever the size of the viewPort frame changes.
-        # self.bind("<Configure>", self.onCanvasConfigure)  # bind an event whenever the size of the canvas frame changes.
-
-        self.bind_all('<MouseWheel>', self.onMouseWheel)
-
-        self.onFrameConfigure(None)  # perform an initial stretch on render, otherwise the scroll region has a tiny border until the first resize
-
-    def onFrameConfigure(self, event):
-        '''Reset the scroll region to encompass the inner frame'''
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))  # whenever the size of the frame changes, alter the scroll region respectively.
-
-    def onCanvasConfigure(self, event):
-        '''Reset the canvas window to encompass inner frame when required'''
-        canvas_width = event.width
-        self.canvas.itemconfig(self.canvas_window, width=canvas_width)  # whenever the size of the canvas changes alter the window region respectively.
-
-    def onMouseWheel(self, event):  # cross platform scroll wheel event
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def onEnter(self, event):  # bind wheel events when the cursor enters the control
-        self.bind_all("<MouseWheel>", self.onMouseWheel)
-
-    def onLeave(self, event):  # unbind wheel events when the cursorl leaves the control
-        self.unbind_all("<MouseWheel>")
 
 class VideoPlayer(Frame):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, mrl, *args, **kwargs):
         super(VideoPlayer, self).__init__(*args, **kwargs)
         self.is_player_paused = False
         self.is_player_active = False
-        self.button_frame = Frame(self, bg="red", bd=1)
+        self.button_frame = Frame(self, bd=1)
+        self.mrl = mrl
 
-    def setup(self):
-        # TODO find a way to remove space between buttons and player
         self.play_button = Button(self.button_frame, command=self.play, text="Play")
         self.pause_button = Button(self.button_frame, command=self.pause, text="Pause/Stop")
         # self.stop_button = Button(self.button_frame, command=self.stop, text="Stop")
@@ -83,13 +44,9 @@ class VideoPlayer(Frame):
         self.player = self.vlcInstance.media_player_new()
         win_id = self.canvas.winfo_id()
         self.player.set_hwnd(win_id)
-        self.player.set_mrl(MRL)
+        self.player.set_mrl(self.mrl)
         self.player.play()
         self.is_player_active = True
-
-    def stop(self):
-        self.player.stop()
-        self.is_player_active = False
 
     def play(self):
         if self.is_player_paused or not self.is_player_active:
@@ -101,8 +58,6 @@ class VideoPlayer(Frame):
         if not self.is_player_paused and self.is_player_active:
             self.player.pause()
             self.is_player_paused = True
-        elif self.is_player_paused and self.is_player_active:
-            self.stop()
 
 
 class FileSelector(Frame):
@@ -110,62 +65,44 @@ class FileSelector(Frame):
         super(FileSelector, self).__init__(*args, **kwargs)
 
 
-class TimeLine(Frame):
+class Timeline(Frame):
     def __init__(self, player, metadata, *args, **kwargs):
-        super(TimeLine, self).__init__(*args, **kwargs)
-        self.scroll_frame = ScrollFrame(self)
+        super(Timeline, self).__init__(*args, **kwargs)
+        # self.scroll_frame = ScrollableFrame(self)
         self.player = player
         self.metadata = metadata
-        self.labels_dict = self.read_meta()
-        self.ungrided = set()
-        self.listbox_list = []
-        self.frames = self.label_organizer()
-        # TODO set scrollbars on the frame with labels and the listboxes
-        self.scroll_frame.pack()
-        for frame in self.frames:
-            frame.pack()
 
-        # TODO make labels as part of a listbox and time intervals as part of listbox as well then labels can be
+        self.tree = ttk.Treeview(self, height=3)
+        ysb = ttk.Scrollbar(self, orient='vertical', command=self.tree.yview)
+        xsb = ttk.Scrollbar(self, orient='horizontal', command=self.tree.xview)
+        self.tree.configure(yscroll=ysb.set, xscroll=xsb.set)
+        style = ttk.Style()
+        style.configure("Treeview.Heading", font=[None, 15])
+        style.configure("Treeview", font=[None, 12])
 
-    #  clicked to minimize/hide their time intervals listbox
-    def label_organizer(self):
-        frames = []
-        labels = list(self.labels_dict.keys())
-        times = list(self.labels_dict.values())
-        for i in range(len(labels)):
-            var = StringVar()
-            var.set(times[i])  # TODO Change times to be in format h:m:s instead of seconds
-            frame = Frame(self.scroll_frame)
-            curr_listbox = Listbox(frame, listvariable=var, selectmode='single')  # check add callback to listbox
-            label = labels[i]
-            label_object = Label(frame, text=label)
-            label_object.bind("<Button-1>", lambda x, j=i: self.toggle_listbox(x, j))
-            label_object.pack()
-            curr_listbox.pack()
-            curr_listbox.pack_forget()
-            curr_listbox.bind('<<ListboxSelect>>', self.change_player_time)
-            self.ungrided.add(label)
-            self.listbox_list.append(curr_listbox)
-            frames.append(frame)
-        return frames
+        self.tree.heading('#0', text="Classes Identified", anchor='w')
 
-    def change_player_time(self, event):
-        lb = event.widget
-        time = lb.get(lb.curselection()[0])[0]
-        self.player.play()
-        self.player.set_time(time * 1000)
-        self.player.play()
+        self.update_meta(self.metadata)
 
-    # use widget.winfo_viewable to check if it is viewable
-    def toggle_listbox(self, event, index):
-        label = event.widget['text']
-        listbox = self.listbox_list[index]
-        if label not in self.ungrided:
-            listbox.pack_forget()
-            self.ungrided.add(label)
-        else:
-            listbox.pack()
-            self.ungrided.remove(label)
+
+        self.tree.grid(row=0, column=0)
+        ysb.grid(row=0, column=1, sticky='ns')
+        # xsb.grid(row=1, column=0, sticky='ew')
+
+        self.tree.bind('<ButtonRelease-1>', self.select_item)
+        self.bind("<Configure>", self.on_timeline_configure)
+
+    def select_item(self, a):
+        curItem = self.tree.focus()
+        time = self.tree.item(curItem)["values"]
+        if time:
+            self.player.set_time(time[0] * 1000)
+            self.player.play()
+
+    def on_timeline_configure(self, event):
+        height = self.winfo_height()
+        desired_height = (height - 26) // 20
+        self.tree.configure(height=desired_height)
 
     def read_meta(self):
         meta = open(self.metadata, 'r')
@@ -187,8 +124,6 @@ class TimeLine(Frame):
         for label, times in labels_dict.items():
             times = list(times)
             times.sort(key=lambda x: int(x))
-            # print(label)
-            # print(times)
             start = int(times[0]) // 1000  # value is now in seconds
             prev = start
             curr = start
@@ -207,17 +142,69 @@ class TimeLine(Frame):
         meta.close()
         return new_labels_dict
 
+    def update_meta(self, metadata):
+        self.metadata = metadata
+        # delete all items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.labels_dict = self.read_meta()
+        self.labels = list(self.labels_dict.keys())
+        self.times = list(self.labels_dict.values())
+        self.item_count = 0
 
+        for i in range(len(self.labels)):
+            parent = self.tree.insert('', 'end', text=self.labels[i], open=False)
+            self.item_count += 1
+            for j in range(len(self.times[i])):
+                child = self.tree.insert(parent, 'end', text=str(self.times[i][j]), values=self.times[i][j], open=False)
+                self.item_count += 1
+
+
+def choose_file(timeline: Timeline):
+    video_extensions = ["*.mp4", "*.mkv", "*.mov", "*.avi", "*.dav"]
+    text_extensions = ["*.txt"]
+    files = filedialog.askopenfilenames(initialdir=CWD, title="Select 1 Video file and 1 Metadata file",
+                                        filetypes=(
+                                        ("video and metadata.txt files", ";".join(video_extensions + text_extensions)),
+                                        ("all files", "*.*")))
+    video, metadata = None, None
+    video_extensions = tuple(map(lambda x: x[1:], video_extensions))
+    text_extensions = tuple(map(lambda x: x[1:], text_extensions))
+    for file in files:
+        if file.lower().endswith(video_extensions):
+            video = file
+        elif file.lower().endswith(text_extensions):
+            metadata = file
+    if not video:
+        messagebox.showerror("Incorrect Video Filetype Error",
+                             f"Please the choose correct filetypes for the video files: "
+                             f"{video_extensions}")
+        return
+    if not metadata:
+        messagebox.showerror("Incorrect Metadata Filetype Error",
+                             f"Please the choose correct filetypes for the metadata files: "
+                             f"{text_extensions}")
+        return
+    timeline.player.set_mrl(video)
+    timeline.update_meta(metadata)
+    timeline.player.play()
 
 
 root = Tk()
-root.geometry("900x550")
+root.geometry("1200x760")
 root.columnconfigure(0, weight=1)
+# root.columnconfigure(1, weight=1)
 root.rowconfigure(0, weight=1)
-mainframe = VideoPlayer(root)
-mainframe.setup()
+mainframe = VideoPlayer(MRL, root)
 mainframe.grid(row=0, column=0, sticky=NSEW)
-timeline = TimeLine(mainframe.player, test_meta, master=root, bg="red")
-timeline.grid(row=0, column=1, padx=5, pady=5, sticky=NS)
+# mainframe.pack(side=LEFT, fill=BOTH, expand=True)
+files_frame = Frame(root)
+files_frame.rowconfigure(0, weight=1)
+
+timeline = Timeline(mainframe.player, test_meta, master=files_frame)
+files_frame.grid(row=0, column=1, padx=2, sticky=NSEW)
+timeline.grid(row=0, sticky=NS)
+file_button = Button(files_frame, text="Choose File and Metadata", command=partial(choose_file, timeline))
+file_button.grid(row=1, pady=2)
 
 root.mainloop()
