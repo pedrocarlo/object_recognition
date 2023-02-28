@@ -13,6 +13,13 @@ icons_path = CWD + '\\icons\\'
 test_meta = CWD + '\\runs/detect/predict/out_video_meta.txt'
 
 
+def time_calc(seconds):
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return hours, minutes, seconds
+
+
 class VideoPlayer(Frame):
     def __init__(self, mrl, *args, **kwargs):
         super(VideoPlayer, self).__init__(*args, **kwargs)
@@ -28,13 +35,16 @@ class VideoPlayer(Frame):
         # self.pause_icon = PhotoImage(icons_path + 'pause.png')
 
         self.canvas = Canvas(self)
+        self.timeline = Timeline(self)
 
         self.columnconfigure(0, weight=1)
         # self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
         # self.rowconfigure(1, weight=1)
         self.canvas.grid(row=0, sticky=NSEW)
-        self.button_frame.grid(row=1, sticky=NSEW)
+        self.button_frame.grid(row=2, sticky=NSEW)
+        self.timeline.grid(row=1, sticky=NSEW)
+
         self.button_frame.columnconfigure(0, weight=1)
         self.button_frame.columnconfigure(1, weight=1)
         self.play_button.grid(row=0, column=0, sticky=EW)
@@ -48,6 +58,8 @@ class VideoPlayer(Frame):
         self.player.play()
         self.is_player_active = True
 
+        self.timeline.bind("<Configure>", self.timeline_configure)
+
     def play(self):
         if self.is_player_paused or not self.is_player_active:
             self.player.play()
@@ -59,15 +71,69 @@ class VideoPlayer(Frame):
             self.player.pause()
             self.is_player_paused = True
 
+    def timeline_configure(self, event):
+        timeline = self.timeline
+        timeline.configure(height=self.winfo_height() // 10)
+        self.timeline.delete("all")
+        timeline.draw_timeline(3600)
+        # Redraw
 
-class FileSelector(Frame):
+
+class Timeline(Canvas):
     def __init__(self, *args, **kwargs):
-        super(FileSelector, self).__init__(*args, **kwargs)
-
-
-class Timeline(Frame):
-    def __init__(self, player, metadata, *args, **kwargs):
         super(Timeline, self).__init__(*args, **kwargs)
+
+    # Time in seconds
+    def draw_timeline(self, total_time):
+        padding_x = 20
+        width, height = self.winfo_width() - padding_x, self.winfo_height()
+        # Find width that is divisible by 10
+        tot_removed = 0
+        divisor = 24
+        while width % divisor != 0:
+            width -= 1
+            tot_removed += 1
+        x_c, y_c = padding_x, height // 2
+        self.create_line(x_c, y_c, x_c + width, y_c, fill="green", width=5)
+        # draw 10 spaced bars
+        step = width // divisor
+        bar_height = height // 7
+        minute_step = step // 5
+        count = 0
+        print(width, step)
+        for x in range(x_c, x_c + width + 1, step):
+            print(x)
+            self.create_line(x, y_c - bar_height, x, y_c + bar_height)
+            hours, minutes, seconds = time_calc((total_time // divisor) * count)
+            # TODO check later better formatting method with datetime to be easier to read
+            self.create_text(x, y_c + bar_height + 5, text=f"{hours}:{minutes}")
+            count += 1
+            # for x2 in range(x, x + step, minute_step):
+            #     self.create_line(x2, y_c - bar_height // 2, x2, y_c + bar_height // 2)
+        # draw cursor for timeline
+
+        cursor_height = height // 4
+        coords = (x_c, y_c - cursor_height, x_c, y_c + cursor_height)
+        self.draw_cursor(coords, 0, total_time)
+
+    def draw_cursor(self, coords, curr_time, total_time):
+        self.delete("cursor")  # delete cursor
+        self.create_line(*coords, fill="red", width=2, tags="cursor")
+        hours, minutes, seconds = time_calc(curr_time)
+        # TODO check later better formatting method with datetime to be easier to read
+        x, y = coords[0], coords[1]
+        self.create_text(x, y - 5, text=f"{hours}:{minutes:02}:{seconds:02}")
+
+
+
+    # bind events for B1-Motion when browsing thorugh the timeline with mouse button pressed down
+    # bind events for Mouse motion in timeline when you just want to check the time in the timeline
+
+
+
+class ClassTimeline(Frame):
+    def __init__(self, player, metadata, *args, **kwargs):
+        super(ClassTimeline, self).__init__(*args, **kwargs)
         # self.scroll_frame = ScrollableFrame(self)
         self.player = player
         self.metadata = metadata
@@ -84,13 +150,12 @@ class Timeline(Frame):
 
         self.update_meta(self.metadata)
 
-
         self.tree.grid(row=0, column=0)
         ysb.grid(row=0, column=1, sticky='ns')
         # xsb.grid(row=1, column=0, sticky='ew')
 
         self.tree.bind('<ButtonRelease-1>', self.select_item)
-        self.bind("<Configure>", self.on_timeline_configure)
+        self.bind("<Configure>", self.on_class_list_configure)
 
     def select_item(self, a):
         curItem = self.tree.focus()
@@ -99,7 +164,7 @@ class Timeline(Frame):
             self.player.set_time(time[0] * 1000)
             self.player.play()
 
-    def on_timeline_configure(self, event):
+    def on_class_list_configure(self, event):
         height = self.winfo_height()
         desired_height = (height - 26) // 20
         self.tree.configure(height=desired_height)
@@ -136,6 +201,7 @@ class Timeline(Frame):
                     intervals.append(old_interval)
                     start = curr
                 prev = curr
+            # TODO correct ending here as I think it is not quite correct
             intervals.append((start, None))  # None represents that it did not find an end interval
             new_labels_dict[label] = intervals
 
@@ -160,13 +226,14 @@ class Timeline(Frame):
                 self.item_count += 1
 
 
-def choose_file(timeline: Timeline):
+def choose_file(class_widget: ClassTimeline):
     video_extensions = ["*.mp4", "*.mkv", "*.mov", "*.avi", "*.dav"]
     text_extensions = ["*.txt"]
     files = filedialog.askopenfilenames(initialdir=CWD, title="Select 1 Video file and 1 Metadata file",
                                         filetypes=(
-                                        ("video and metadata.txt files", ";".join(video_extensions + text_extensions)),
-                                        ("all files", "*.*")))
+                                            ("video and metadata.txt files",
+                                             ";".join(video_extensions + text_extensions)),
+                                            ("all files", "*.*")))
     video, metadata = None, None
     video_extensions = tuple(map(lambda x: x[1:], video_extensions))
     text_extensions = tuple(map(lambda x: x[1:], text_extensions))
@@ -185,9 +252,9 @@ def choose_file(timeline: Timeline):
                              f"Please the choose correct filetypes for the metadata files: "
                              f"{text_extensions}")
         return
-    timeline.player.set_mrl(video)
-    timeline.update_meta(metadata)
-    timeline.player.play()
+    class_widget.player.set_mrl(video)
+    class_widget.update_meta(metadata)
+    class_widget.player.play()
 
 
 root = Tk()
@@ -201,10 +268,12 @@ mainframe.grid(row=0, column=0, sticky=NSEW)
 files_frame = Frame(root)
 files_frame.rowconfigure(0, weight=1)
 
-timeline = Timeline(mainframe.player, test_meta, master=files_frame)
+timeline = ClassTimeline(mainframe.player, test_meta, master=files_frame)
 files_frame.grid(row=0, column=1, padx=2, sticky=NSEW)
 timeline.grid(row=0, sticky=NS)
 file_button = Button(files_frame, text="Choose File and Metadata", command=partial(choose_file, timeline))
 file_button.grid(row=1, pady=2)
+mainframe.timeline.update()
+# mainframe.timeline.draw_timeline(1000)
 
 root.mainloop()
