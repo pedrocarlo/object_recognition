@@ -2,6 +2,7 @@ from functools import partial
 
 import vlc
 import os
+from math import floor, ceil
 from tkinter import *
 import tkinter.ttk as ttk
 from scrollable_frame import ScrollableFrame
@@ -24,7 +25,6 @@ class VideoPlayer(Frame):
     def __init__(self, mrl, *args, **kwargs):
         super(VideoPlayer, self).__init__(*args, **kwargs)
         self.is_player_paused = False
-        self.is_player_active = False
         self.button_frame = Frame(self, bd=1)
         self.mrl = mrl
 
@@ -35,7 +35,16 @@ class VideoPlayer(Frame):
         # self.pause_icon = PhotoImage(icons_path + 'pause.png')
 
         self.canvas = Canvas(self)
-        self.timeline = Timeline(self)
+
+        self.vlcInstance = vlc.Instance("--network-caching=2000")
+        self.player = self.vlcInstance.media_player_new()
+        win_id = self.canvas.winfo_id()
+        self.player.set_hwnd(win_id)
+        self.player.set_mrl(self.mrl)
+        self.player.play()
+        self.wait_player()
+        self.timeline = Timeline(self, self)
+        self.play()
 
         self.columnconfigure(0, weight=1)
         # self.columnconfigure(1, weight=1)
@@ -50,92 +59,138 @@ class VideoPlayer(Frame):
         self.play_button.grid(row=0, column=0, sticky=EW)
         self.pause_button.grid(row=0, column=1, sticky=EW)
 
-        self.vlcInstance = vlc.Instance("--network-caching=2000")
-        self.player = self.vlcInstance.media_player_new()
-        win_id = self.canvas.winfo_id()
-        self.player.set_hwnd(win_id)
-        self.player.set_mrl(self.mrl)
-        self.player.play()
-        self.is_player_active = True
-
         self.timeline.bind("<Configure>", self.timeline_configure)
+        self.timeline.bind("<Leave>", self.on_mouse_leave)
 
     def play(self):
-        if self.is_player_paused or not self.is_player_active:
+        self.player.play()
+        self.is_player_paused = False
+        ended = 6
+        if self.player.get_state().value == ended:
+            self.player.stop()
             self.player.play()
-            self.is_player_paused = False
-            self.is_player_active = True
+        self.wait_player()
+        # ask timeline to track time
+        self.track_time()
 
     def pause(self):
-        if not self.is_player_paused and self.is_player_active:
-            self.player.pause()
-            self.is_player_paused = True
+        self.player.pause()
+        self.is_player_paused = True
+
+    def track_time(self):
+        if not self.is_player_paused and self.player.is_playing():
+            self.timeline.track_player_time()
+            self.after(200, self.track_time)
 
     def timeline_configure(self, event):
         timeline = self.timeline
         timeline.configure(height=self.winfo_height() // 10)
         self.timeline.delete("all")
-        timeline.draw_timeline(3600)
+        timeline.draw_timeline(self.player.get_length() // 1000)
         # Redraw
+
+    def on_mouse_leave(self, event):
+        self.timeline.track_player_time()
+
+    def wait_player(self):
+        while not self.player.is_playing():
+            pass
+        return
+
+    def create_player(self):
+        self.player = self.vlcInstance.media_player_new()
+        win_id = self.canvas.winfo_id()
+        self.player.set_hwnd(win_id)
+        self.player.set_mrl(self.mrl)
+        self.player.play()
+        self.wait_player()
 
 
 class Timeline(Canvas):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, player: VideoPlayer, *args, **kwargs):
         super(Timeline, self).__init__(*args, **kwargs)
+        self.tot_width = 1
+        self.tot_height = 1
+        self.video_widget = player
+        self.padding_x = 20
+        self.divisor = 24
+        self.last_x = 0
+        self.bind("<Motion>", self.track_mouse_time)
+        self.after(1000, self.track_player_time)
+        self.bind("<ButtonRelease-1>", self.change_time)
 
     # Time in seconds
     def draw_timeline(self, total_time):
-        padding_x = 20
-        width, height = self.winfo_width() - padding_x, self.winfo_height()
+        width, height = self.winfo_width() - self.padding_x, self.winfo_height()
         # Find width that is divisible by 10
-        tot_removed = 0
-        divisor = 24
-        while width % divisor != 0:
+        while width % self.divisor != 0:
             width -= 1
-            tot_removed += 1
-        x_c, y_c = padding_x, height // 2
-        self.create_line(x_c, y_c, x_c + width, y_c, fill="green", width=5)
+        self.tot_width, self.tot_height = width, height
+        width += self.padding_x
+        x_c, y_c = self.padding_x, height // 2
+        self.create_line(x_c, y_c, width, y_c, fill="green", width=5)
         # draw 10 spaced bars
-        step = width // divisor
+        step = width // self.divisor
         bar_height = height // 7
         minute_step = step // 5
         count = 0
-        print(width, step)
-        for x in range(x_c, x_c + width + 1, step):
-            print(x)
+        for x in range(x_c, width + 1, step):
             self.create_line(x, y_c - bar_height, x, y_c + bar_height)
-            hours, minutes, seconds = time_calc((total_time // divisor) * count)
+            hours, minutes, seconds = time_calc((total_time // self.divisor) * count)
             # TODO check later better formatting method with datetime to be easier to read
-            self.create_text(x, y_c + bar_height + 5, text=f"{hours}:{minutes}")
+            self.create_text(x, y_c + bar_height + 5, text=f"{hours}:{minutes:02}:{seconds:02}")
             count += 1
             # for x2 in range(x, x + step, minute_step):
             #     self.create_line(x2, y_c - bar_height // 2, x2, y_c + bar_height // 2)
         # draw cursor for timeline
+        self.last_x = step * self.divisor + 1 + x_c
+        self.draw_cursor(self.padding_x, None)
 
-        cursor_height = height // 4
-        coords = (x_c, y_c - cursor_height, x_c, y_c + cursor_height)
-        self.draw_cursor(coords, 0, total_time)
-
-    def draw_cursor(self, coords, curr_time, total_time):
-        self.delete("cursor")  # delete cursor
-        self.create_line(*coords, fill="red", width=2, tags="cursor")
+    def draw_cursor(self, x, curr_time):
+        self.delete("cursor", "cursor_text")  # delete cursor
+        cursor_height = self.tot_height // 4
+        y = self.tot_height // 2
+        total_time = self.video_widget.player.get_length() // 1000
+        if x is None:
+            percent = curr_time / total_time
+            x = self.padding_x + int(percent * self.tot_width)
+        if curr_time is None:
+            percent = (x - self.padding_x) / self.tot_width
+            curr_time = int(percent * total_time)
+        self.create_line(x, y - cursor_height, x, y + cursor_height, fill="red", width=2, tags="cursor")
         hours, minutes, seconds = time_calc(curr_time)
-        # TODO check later better formatting method with datetime to be easier to read
-        x, y = coords[0], coords[1]
-        self.create_text(x, y - 5, text=f"{hours}:{minutes:02}:{seconds:02}")
+        self.create_text(x, y - cursor_height - 5, text=f"{hours}:{minutes:02}:{seconds:02}", tags="cursor_text")
 
+    def track_mouse_time(self, event):
+        x, y = event.x, event.y
+        if self.padding_x <= x < self.last_x:
+            self.draw_cursor(x, None)
+        else:
+            self.track_player_time()
 
+    def track_player_time(self):
+        # find root
+        curr_time = self.video_widget.player.get_time() // 1000
+        self.draw_cursor(None, curr_time)
 
-    # bind events for B1-Motion when browsing thorugh the timeline with mouse button pressed down
+    def change_time(self, event):
+        x = event.x
+        if self.padding_x <= x < self.last_x:
+            total_time = self.video_widget.player.get_length()
+            percent = (x - self.padding_x) / self.tot_width
+            curr_time = int(percent * total_time)
+            self.video_widget.player.set_time(curr_time)
+            self.video_widget.play()
+
+    # bind events for B1-Motion when browsing through the timeline with mouse button pressed down
     # bind events for Mouse motion in timeline when you just want to check the time in the timeline
-
 
 
 class ClassTimeline(Frame):
     def __init__(self, player, metadata, *args, **kwargs):
         super(ClassTimeline, self).__init__(*args, **kwargs)
         # self.scroll_frame = ScrollableFrame(self)
-        self.player = player
+        self.video_widget = player
         self.metadata = metadata
 
         self.tree = ttk.Treeview(self, height=3)
@@ -161,8 +216,8 @@ class ClassTimeline(Frame):
         curItem = self.tree.focus()
         time = self.tree.item(curItem)["values"]
         if time:
-            self.player.set_time(time[0] * 1000)
-            self.player.play()
+            self.video_widget.player.set_time(time[0] * 1000)
+            self.video_widget.play()
 
     def on_class_list_configure(self, event):
         height = self.winfo_height()
@@ -252,9 +307,9 @@ def choose_file(class_widget: ClassTimeline):
                              f"Please the choose correct filetypes for the metadata files: "
                              f"{text_extensions}")
         return
-    class_widget.player.set_mrl(video)
+    class_widget.video_widget.player.set_mrl(video)
     class_widget.update_meta(metadata)
-    class_widget.player.play()
+    class_widget.video_widget.play()
 
 
 root = Tk()
@@ -268,12 +323,11 @@ mainframe.grid(row=0, column=0, sticky=NSEW)
 files_frame = Frame(root)
 files_frame.rowconfigure(0, weight=1)
 
-timeline = ClassTimeline(mainframe.player, test_meta, master=files_frame)
+class_list = ClassTimeline(mainframe, test_meta, master=files_frame)
 files_frame.grid(row=0, column=1, padx=2, sticky=NSEW)
-timeline.grid(row=0, sticky=NS)
-file_button = Button(files_frame, text="Choose File and Metadata", command=partial(choose_file, timeline))
+class_list.grid(row=0, sticky=NS)
+file_button = Button(files_frame, text="Choose File and Metadata", command=partial(choose_file, class_list))
 file_button.grid(row=1, pady=2)
 mainframe.timeline.update()
 # mainframe.timeline.draw_timeline(1000)
-
 root.mainloop()
