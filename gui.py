@@ -249,20 +249,14 @@ class ClassTimeline(Frame):
             curr = start
             interval = [curr]
             intervals = [interval]
-            diff_triggered = False
             for i in range(1, len(times)):
-                diff_triggered = False
                 curr = int(times[i]) // 1000
                 diff = curr - prev
                 if diff > 1:
-                    diff_triggered = True
                     interval = []
                     intervals.append(interval)
                 prev = curr
                 interval.append(prev)
-            # TODO correct ending here as I think it is not quite correct
-            if not diff_triggered:
-                interval.append(tot_time)
             for i in range(len(intervals)):
                 interval = intervals[i]
                 intervals[i] = [interval[0], interval[-1]]
