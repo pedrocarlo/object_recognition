@@ -137,7 +137,6 @@ class Timeline(Canvas):
         for x in range(x_c, width + 1, step):
             self.create_line(x, y_c - bar_height, x, y_c + bar_height)
             hours, minutes, seconds = time_calc((total_time // self.divisor) * count)
-            # TODO check later better formatting method with datetime to be easier to read
             self.create_text(x, y_c + bar_height + 5, text=f"{hours}:{minutes:02}:{seconds:02}")
             count += 1
             # for x2 in range(x, x + step, minute_step):
@@ -241,23 +240,32 @@ class ClassTimeline(Frame):
                 labels_dict[label].add(
                     milli_seconds)  # will probably add same time 30 times per seconds. Many repeated calls
         new_labels_dict = dict()
+        tot_time = self.video_widget.player.get_length() // 1000
         for label, times in labels_dict.items():
             times = list(times)
             times.sort(key=lambda x: int(x))
             start = int(times[0]) // 1000  # value is now in seconds
             prev = start
             curr = start
-            intervals = []
+            interval = [curr]
+            intervals = [interval]
+            diff_triggered = False
             for i in range(1, len(times)):
+                diff_triggered = False
                 curr = int(times[i]) // 1000
                 diff = curr - prev
                 if diff > 1:
-                    old_interval = (start, prev)
-                    intervals.append(old_interval)
-                    start = curr
+                    diff_triggered = True
+                    interval = []
+                    intervals.append(interval)
                 prev = curr
+                interval.append(prev)
             # TODO correct ending here as I think it is not quite correct
-            intervals.append((start, None))  # None represents that it did not find an end interval
+            if not diff_triggered:
+                interval.append(tot_time)
+            for i in range(len(intervals)):
+                interval = intervals[i]
+                intervals[i] = [interval[0], interval[-1]]
             new_labels_dict[label] = intervals
 
         meta.close()
